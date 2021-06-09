@@ -85,7 +85,7 @@ default_3D_augmentation_params = {
     "additive_brightness_mu": 0.0,
     "additive_brightness_sigma": 0.1,
 
-    "num_threads": 12 if 'simple_frame_n_proc_DA' not in os.environ else int(os.environ['simple_frame_n_proc_DA']),
+    "num_threads": 4 if 'simple_frame_n_proc_DA' not in os.environ else int(os.environ['simple_frame_n_proc_DA']),
     "num_cached_per_thread": 1,
 }
 
@@ -144,7 +144,7 @@ def get_default_augmentation(dataloader_train, dataloader_val, patch_size,global
         tr_transforms.append(Convert3DTo2DTransform())
 
     tr_transforms.append(dino_SpatialTransform(
-        patch_size,(32,128,128), (16,64,64),patch_center_dist_from_border=None, do_elastic_deform=params.get("do_elastic"),
+        patch_size,global_patch_size, local_patch_size,patch_center_dist_from_border=None, do_elastic_deform=params.get("do_elastic"),
         alpha=params.get("elastic_deform_alpha"), sigma=params.get("elastic_deform_sigma"),
         do_rotation=params.get("do_rotation"), angle_x=params.get("rotation_x"), angle_y=params.get("rotation_y"),
         angle_z=params.get("rotation_z"), do_scale=params.get("do_scaling"), scale=params.get("scale_range"),

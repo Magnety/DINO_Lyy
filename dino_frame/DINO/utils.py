@@ -20,6 +20,7 @@ import torch
 from torch import nn
 import torch.distributed as dist
 from PIL import ImageFilter, ImageOps
+from dino_frame.network_architecture.neural_network import ClassficationNetwork
 
 def clip_gradients(model, clip):
     norms = []
@@ -506,7 +507,55 @@ class MultiCropWrapper(nn.Module):
             start_idx = end_idx
         # Run the head forward on the concatenated features.
         return self.head(output)
+class myMultiCropWrapper(ClassficationNetwork):
+    """
+    Perform forward pass separately on each resolution input.
+    The inputs corresponding to a single resolution are clubbed and single
+    forward is run on the same resolution inputs. Hence we do several
+    forward passes = number of different resolutions used. We then
+    concatenate all the output features and run the head forward on these
+    concatenated features.
+    """
+    def __init__(self,num_classes, deep_supervision, image_size, backbone, head):
+        super(myMultiCropWrapper, self).__init__()
+        # disable layers dedicated to ImageNet labels classification
+        backbone.fc, backbone.head = nn.Identity(), nn.Identity()
+        self.backbone = backbone
+        self.head = head
+        self.do_ds = False
+        norm_cfg = 'BN'
+        activation_cfg = 'ReLU'
+        self.default_arch = 'vit_small'
+        self.conv_op = nn.Conv3d
+        self.norm_op = nn.BatchNorm3d
+        self.dropout_op = nn.Dropout3d
+        self.num_classes = num_classes
+        self.image_size = image_size
+        self.patch_size = (8, 16, 16)
+        self.out_dim = 65536
+        self.use_bn_in_head = False
+        self.norm_last_layer = True
+        self._deep_supervision = deep_supervision
+        self.do_ds = deep_supervision
 
+    def forward(self, x):
+        # convert to list
+        if not isinstance(x, list):
+            x = [x]
+        idx_crops = torch.cumsum(torch.unique_consecutive(
+            torch.tensor([inp.shape[-1] for inp in x]),
+            return_counts=True,
+        )[1], 0)
+        start_idx = 0
+        for end_idx in idx_crops:
+            _out = self.backbone(torch.cat(x[start_idx: end_idx]))
+            if start_idx == 0:
+                output = _out
+            else:
+                output = torch.cat((output, _out))
+            start_idx = end_idx
+        # Run the head forward on the concatenated features.
+        return self.head(output)
 
 def get_params_groups(model):
     regularized = []

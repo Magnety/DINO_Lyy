@@ -87,6 +87,7 @@ def results_loop(in_queues: List[Queue], out_queue: thrQueue, abort_event: Event
     end_ctr = 0
 
     while True:
+        print("/////")
         # if abort_event is set we need to clean up. This is where it hangs sometimes so it makes sense to drain all
         # the incoming queues and ignore all the errors occuring during this process.
         try:
@@ -182,14 +183,20 @@ class MultiThreadedAugmenter(object):
         self.abort_event = Event()
         self.wait_time = wait_time
         self.was_initialized = False
+        print("/////////multi_aug init//////////")
 
     def __iter__(self):
+        print("/////////iter/////////")
+
         return self
 
     def next(self):
+        print("////////next/////////////////")
         return self.__next__()
 
     def __get_next_item(self):
+        print("/////////__get_next_item//////////")
+
         item = None
 
         while item is None:
@@ -207,6 +214,8 @@ class MultiThreadedAugmenter(object):
         return item
 
     def __next__(self):
+        print("/////////__next__//////////")
+
         if not self.was_initialized:
             self._start()
 

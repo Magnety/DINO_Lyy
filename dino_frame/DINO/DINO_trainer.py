@@ -31,7 +31,7 @@ from dino_frame.network_architecture.myVGG import vgg11_bn
 from dino_frame.network_architecture.myResNet import resnext50_32x4d
 from dino_frame.network_architecture.Ensemble import Ensemble
 from dino_frame.data_augmentation.data_augmentation_moreDA import get_moreDA_augmentation
-from dino_frame.DINO.DINONet import DINOLoss,dino_student,dino_teacher,global_trans1,global_trans2,local_trans
+from dino_frame.DINO.DINONet import DINOLoss,dino_student,dino_teacher
 from dino_frame.DINO.utils import cosine_scheduler,clip_gradients,get_world_size,cancel_gradients_last_layer
 try:
     from apex import amp
@@ -152,6 +152,7 @@ class Trainer(nn.Module):
                                                                              'patch_size_for_spatialtransform'],
                                                                               (32,128,128),(16,64,64),
                                                                          self.data_aug_params)
+                    print(self.train_data)
 
                 if self.use_focal_loss:
                     total = 0
@@ -179,11 +180,8 @@ class Trainer(nn.Module):
                     #self.network = MTLN3D().cuda()
             #self.network = VNet_class(num_classes=self.num_classes, deep_supervision=True).cuda()
             self.teacher_network =dino_teacher(num_classes=self.num_classes, deep_supervision=True,image_size=self.patch_size).cuda()
-            self.student_network = dino_student(num_classes=self.num_classes, deep_supervision=True,
-                                                image_size=self.patch_size).cuda()
-            self.global_trans1 = global_trans1(self.patch_size)
-            self.global_trans2 = global_trans2(self.patch_size)
-            self.local_trans = local_trans(self.patch_size)
+            self.student_network = dino_student(num_classes=self.num_classes, deep_supervision=True,image_size=self.patch_size).cuda()
+
             #self.network = resnext50_32x4d(num_classes=self.num_classes).cuda()
             #self.network = vgg11_bn(num_classes=self.num_classes, deep_supervision=True).cuda()
             """if self.use_adam:
@@ -489,7 +487,9 @@ class Trainer(nn.Module):
         self.data_aug_params["num_cached_per_thread"] = 2
 
     def run_iteration(self, data_generator, do_backprop=True, run_online_evaluation=False):
+
         print("//////////run_iter////////////")
+        print(data_generator)
         data_dict = next(data_generator)
         data = data_dict['data']
         global_data1 = data_dict['global_data1']

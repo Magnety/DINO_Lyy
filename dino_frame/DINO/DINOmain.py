@@ -32,7 +32,7 @@ if __name__ == '__main__':
     #print(torch.cuda.is_available())
 
     sys.argv = ['DINOmain.py','611','0']
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
     args = parser.parse_args()
     data_root = args.data_root

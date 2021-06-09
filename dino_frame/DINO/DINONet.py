@@ -8,90 +8,41 @@ import dino_frame.DINO.vision_transformer as vits
 from dino_frame.DINO.vision_transformer import DINOHead
 import numpy as np
 import random
-from dino_frame.DINO.utils import MultiCropWrapper
-class RandomApply(nn.Module):
-    def __init__(self, fn, p):
-        super().__init__()
-        self.fn = fn
-        self.p = p
-    def forward(self, x):
-        if random.random() > self.p:
-            return x
-        return self.fn(x)
-class global_trans1(nn.Module):
-    def __init__(self, image_size):
-        super(global_trans1, self).__init__()
-
-
-        self.global_trans1 = nn.Sequential(
-            RandCrop_tu(image_size=image_size, crop_size=(32, 128, 128)),
-            RandomApply(
-                Gaussiannoise_tu(image_size=(32, 128, 128), SNR=20),
-                p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-        )
-    def forward(self,x):
-        return self.global_trans1(x)
-
-class global_trans2(nn.Module):
-    def __init__(self, image_size):
-        super(global_trans2, self).__init__()
-
-        self.global_trans2 = nn.Sequential(
-            RandCrop_tu(image_size=image_size, crop_size=(32, 128, 128)),
-            RandomApply(
-                Gaussiannoise_tu(image_size=(32, 128, 128), SNR=20),
-                p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-        )
-
-    def forward(self, x):
-        return self.global_trans2(x)
-
-class local_trans(nn.Module):
-    def __init__(self, image_size):
-        super(local_trans, self).__init__()
-
-        self.local_trans = nn.Sequential(
-            RandCrop_tu(image_size=image_size, crop_size=(16, 64, 64)),
-            RandomApply(
-                Gaussiannoise_tu(image_size=(16, 64, 64), SNR=20),
-                p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(16, 64, 64)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(16, 64, 64)),
-                p=0.8
-            ),
-        )
-
-    def forward(self, x):
-        return self.local_trans(x)
-
-
-
-class dino_teacher(ClassficationNetwork):
+from dino_frame.DINO.utils import MultiCropWrapper,myMultiCropWrapper
+def dino_teacher(num_classes, deep_supervision, image_size):
+    default_arch = 'vit_small'
+    patch_size = (8, 16, 16)
+    out_dim = 65536
+    use_bn_in_head = False
+    norm_last_layer = True
+    teacher = vits.__dict__[default_arch](
+        patch_size=patch_size,
+    )
+    embed_dim =teacher.embed_dim
+    teacher = myMultiCropWrapper(num_classes, deep_supervision, image_size,
+        teacher,
+        DINOHead(embed_dim, out_dim, use_bn_in_head),
+    )
+    return teacher
+def dino_student(num_classes, deep_supervision, image_size):
+    default_arch = 'vit_small'
+    patch_size = (8, 16, 16)
+    out_dim = 65536
+    use_bn_in_head = False
+    norm_last_layer = True
+    student = vits.__dict__[default_arch](
+        patch_size=patch_size,
+        drop_path_rate=0.1,
+    )
+    embed_dim =student.embed_dim
+    student = myMultiCropWrapper(num_classes, deep_supervision, image_size,
+        student,
+        DINOHead(embed_dim, out_dim, use_bn_in_head,norm_last_layer=norm_last_layer,),
+    )
+    return student
+class teacher(ClassficationNetwork):
     def __init__(self, num_classes, deep_supervision, image_size, local_crop_number=8):
-        super(dino_teacher, self).__init__()
+        super(teacher, self).__init__()
         self.do_ds = False
         norm_cfg = 'BN'
         activation_cfg = 'ReLU'
@@ -120,9 +71,10 @@ class dino_teacher(ClassficationNetwork):
         print("teacher:",len(x))
         teacher_output = self.teacher(x)
         return teacher_output
-class dino_student(ClassficationNetwork):
+
+class student(ClassficationNetwork):
     def __init__(self, num_classes, deep_supervision, image_size, local_crop_number=8):
-        super(dino_student, self).__init__()
+        super(student, self).__init__()
         self.do_ds = False
         norm_cfg = 'BN'
         activation_cfg = 'ReLU'
@@ -155,98 +107,6 @@ class dino_student(ClassficationNetwork):
         student_output = self.student(x)
         return student_output
 
-class DINO(ClassficationNetwork):
-    def __init__(self, num_classes,deep_supervision,image_size,local_crop_number=8):
-        super(DINO, self).__init__()
-        self.do_ds = False
-        norm_cfg = 'BN'
-        activation_cfg = 'ReLU'
-        self.default_arch = 'vit_small'
-        self.conv_op = nn.Conv3d
-        self.norm_op = nn.BatchNorm3d
-        self.dropout_op = nn.Dropout3d
-        self.num_classes = num_classes
-        self.image_size = image_size
-        self.patch_size = (8,16,16)
-        self.out_dim = 65536
-        self.use_bn_in_head = False
-        self.norm_last_layer = True
-
-        self._deep_supervision = deep_supervision
-        self.do_ds = deep_supervision
-        self.local_crop_number = local_crop_number
-        self.global_trans1 = nn.Sequential(
-            RandCrop_tu(image_size=image_size,crop_size=(32,128,128)),
-            RandomApply(
-            Gaussiannoise_tu(image_size=(32,128,128),SNR=20),
-            p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(32,128,128)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(32,128,128)),
-                p=0.8
-            ),
-        )
-        self.global_trans2 = nn.Sequential(
-            RandCrop_tu(image_size=image_size, crop_size=(32, 128, 128)),
-            RandomApply(
-                Gaussiannoise_tu(image_size=(32, 128, 128), SNR=20),
-                p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(32, 128, 128)),
-                p=0.8
-            ),
-        )
-        self.local_trans = nn.Sequential(
-            RandCrop_tu(image_size=image_size, crop_size=(16,64, 64)),
-            RandomApply(
-                Gaussiannoise_tu(image_size=(16,64,64), SNR=20),
-                p=0.8
-            ),
-            RandomApply(
-                Mirror_tu(image_size=(16,64, 64)),
-                p=0.8
-            ),
-            RandomApply(
-                Spatial_tansform_tu(image_size=(16,64,64)),
-                p=0.8
-            ),
-        )
-        self.student = vits.__dict__[self.default_arch](
-            patch_size = self.patch_size,drop_path_rate = 0.1,
-        )
-        self.teacher =  vits.__dict__[self.default_arch](
-            patch_size = self.patch_size,
-        )
-        self.embed_dim = self.student.embed_dim
-        self.student = MultiCropWrapper(self.student, DINOHead(
-            self.embed_dim,
-            self.out_dim,
-            use_bn=self.use_bn_in_head,
-            norm_last_layer=self.norm_last_layer,
-        ))
-        self.teacher = MultiCropWrapper(
-            self.teacher,
-            DINOHead(self.embed_dim, self.out_dim, self.use_bn_in_head),
-        )
-
-    def forward(self, x):
-        crops = []
-        crops.append(self.global_trans1(x))
-        crops.append(self.global_trans2(x))
-        for _ in range(self.local_crop_number):
-            crops.append(self.local_trans(x))
-        teacher_output = self.teacher(crops[:2])
-        student_output = self.student(crops)
-        return teacher_output,student_output
 
 
 
