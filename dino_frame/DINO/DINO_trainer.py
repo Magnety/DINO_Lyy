@@ -32,7 +32,7 @@ from dino_frame.network_architecture.myResNet import resnext50_32x4d
 from dino_frame.network_architecture.Ensemble import Ensemble
 from dino_frame.data_augmentation.data_augmentation_moreDA import get_moreDA_augmentation
 from dino_frame.DINO.DINONet import DINOLoss,dino_student,dino_teacher
-from dino_frame.DINO.utils import cosine_scheduler,clip_gradients,get_world_size,cancel_gradients_last_layer
+from dino_frame.DINO.utils import cosine_scheduler,clip_gradients,get_world_size,cancel_gradients_last_layer,has_batchnorms
 try:
     from apex import amp
 except ImportError:
@@ -74,7 +74,7 @@ class Trainer(nn.Module):
             self.load_plans_file()
 
             self.process_plans(self.plans)
-            self.batch_size = 24
+            self.batch_size = 2
             self.aug_more = False
             self.use_adam = True
             self.use_focal_loss = True
@@ -181,7 +181,22 @@ class Trainer(nn.Module):
             #self.network = VNet_class(num_classes=self.num_classes, deep_supervision=True).cuda()
             self.teacher_network =dino_teacher(num_classes=self.num_classes, deep_supervision=True,image_size=self.patch_size).cuda()
             self.student_network = dino_student(num_classes=self.num_classes, deep_supervision=True,image_size=self.patch_size).cuda()
+            """if has_batchnorms(self.student_network):
+                self.student_network = nn.SyncBatchNorm.convert_sync_batchnorm(self.student_network)
+                self.teacher_network = nn.SyncBatchNorm.convert_sync_batchnorm(self.teacher_network)
 
+                # we need DDP wrapper to have synchro batch norms working...
+                self.teacher_network = nn.parallel.DistributedDataParallel(self.teacher_network, device_ids=[0])
+                self.teacher_without_ddp = self.teacher_network.module"""
+            #else:
+                # teacher_without_ddp and teacher are the same thing
+            self.teacher_without_ddp = self.teacher_network
+            #self.student_network = nn.parallel.DistributedDataParallel(self.student_network, device_ids=[0])
+            # teacher and student start with the same weights
+            self.teacher_without_ddp.load_state_dict(self.student_network.state_dict())
+            # there is no backpropagation through the teacher, so no need for gradients
+            for p in self.teacher_network.parameters():
+                p.requires_grad = False
             #self.network = resnext50_32x4d(num_classes=self.num_classes).cuda()
             #self.network = vgg11_bn(num_classes=self.num_classes, deep_supervision=True).cuda()
             """if self.use_adam:
@@ -494,9 +509,7 @@ class Trainer(nn.Module):
         data = data_dict['data']
         global_data1 = data_dict['global_data1']
         global_data2 = data_dict['global_data2']
-
         local_data = data_dict['local_data']
-
         target = data_dict['target']
         class_target = data_dict['class_label']
         if not isinstance(data, torch.Tensor):
@@ -518,21 +531,22 @@ class Trainer(nn.Module):
         target = target.cuda(non_blocking=True)
 
         class_target = class_target.cuda(non_blocking=True)
-        print("/////////test 0609///////////")
-        print("global_data.shape:",global_data1.shape)
-        print("local_data.shape:", local_data.shape)
+        #print("/////////test 0609///////////")
+        #print("global_data.shape:",global_data1.shape)
+        #print("local_data.shape:", local_data.shape)
         for i, param_group in enumerate(self.optimizer.param_groups):
             param_group["lr"] = self.lr_schedule[self.it]
             if i == 0:  # only the first group is regularized
                 param_group["weight_decay"] = self.wd_schedule[self.it]
-        crops = []
-        crops.append(self.global_trans1(data))
-        crops.append(self.global_trans2(data))
-        for _ in range(self.local_crops_number):
-            crops.append(self.local_trans(data))
+        input = []
+        input.append(global_data1)
+        input.append(global_data2)
+        for crop_i in range(local_data.shape[1]):
+            input.append(local_data[:,crop_i,:,:,:,:])
+        #print("input[2].shape:",input[2].shape)
         with torch.cuda.amp.autocast(self.fp16_scaler is not None):
-            teacher_output = self.teacher_network(crops[:2])  # only the 2 global views pass through the teacher
-            student_output = self.student_network(crops)
+            teacher_output = self.teacher_network(input[:2])  # only the 2 global views pass through the teacher
+            student_output = self.student_network(input)
             loss = self.dino_loss(student_output, teacher_output, self.epoch)
 
         #liuyiyao no feature
@@ -549,27 +563,29 @@ class Trainer(nn.Module):
         #liuyiyao no feature
         #output = self.network(data,feature)
         param_norms = None
-        if self.fp16_scaler is None:
-            loss.backward()
-            if self.clip_grad:
-                param_norms = clip_gradients(self.student_network, self.clip_grad)
-            cancel_gradients_last_layer(self.epoch, self.student_network,
-                                              self.freeze_last_layer)
-            self.optimizer.step()
-        else:
-            self.fp16_scaler.scale(loss).backward()
-            if self.clip_grad:
-                self.fp16_scaler.unscale_(self.optimizer)  # unscale the gradients of optimizer's assigned params in-place
-                param_norms = clip_gradients(self.student_network, self.clip_grad)
-            cancel_gradients_last_layer(self.epoch, self.student_network,
-                                              self.freeze_last_layer)
-            self.fp16_scaler.step(self.optimizer)
-            self.fp16_scaler.update()
+        if do_backprop:
+            if self.fp16_scaler is None:
+                loss.backward()
+                if self.clip_grad:
+                    param_norms = clip_gradients(self.student_network, self.clip_grad)
+                cancel_gradients_last_layer(self.epoch, self.student_network,
+                                            self.freeze_last_layer)
+                self.optimizer.step()
+            else:
+                self.fp16_scaler.scale(loss).backward()
+                if self.clip_grad:
+                    self.fp16_scaler.unscale_(
+                        self.optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                    param_norms = clip_gradients(self.student_network, self.clip_grad)
+                cancel_gradients_last_layer(self.epoch, self.student_network,
+                                            self.freeze_last_layer)
+                self.fp16_scaler.step(self.optimizer)
+                self.fp16_scaler.update()
 
         # EMA update for the teacher
         with torch.no_grad():
             m = self.momentum_schedule[self.it]  # momentum parameter
-            for param_q, param_k in zip(self.student_network.module.parameters(), self.teacher_network.parameters()):
+            for param_q, param_k in zip(self.student_network.parameters(), self.teacher_network.parameters()):
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         """if run_online_evaluation:
@@ -830,13 +846,13 @@ class Trainer(nn.Module):
         except IOError:
             self.print_to_log_file("failed to plot: ", sys.exc_info())
     def on_epoch_end(self):
-        self.finish_online_evaluation_onlycls()  # does not have to do anything, but can be used to update self.all_val_eval_
+        #self.finish_online_evaluation_onlycls()  # does not have to do anything, but can be used to update self.all_val_eval_
         # metrics
 
         self.plot_progress()
         self.update_eval_criterion_MA()
 
-        self.maybe_update_lr()
+        #self.maybe_update_lr()
 
         self.maybe_save_checkpoint()
 
@@ -909,7 +925,7 @@ class Trainer(nn.Module):
             self.print_to_log_file("train loss : %.4f" % self.all_tr_losses[-1])
             with torch.no_grad():
                 # validation with train=False
-                self.network.eval()
+                self.teacher_network.eval()
                 val_losses = []
                 for b in range(self.num_val_batches_per_epoch):
                     l = self.run_iteration(self.val_data, do_backprop=False,run_online_evaluation=True)
@@ -935,9 +951,9 @@ class Trainer(nn.Module):
 
             self.epoch += 1
             if self.epoch % 10 == 0:
-                self.network.eval()
-                self.validate(epoch=self.epoch,save_softmax=False,validation_folder_name=self.valfolder)
-                #self.save_checkpoint(join(self.output_folder, 'epoch_{}_model_best.model'.format(self.epoch)))
+                #self.network.eval()
+                #self.validate(epoch=self.epoch,save_softmax=False,validation_folder_name=self.valfolder)
+                self.save_checkpoint(join(self.output_folder, 'epoch_{}_model_best.model'.format(self.epoch)))
             if self.epoch % 20 == 0:
                 #self.network.eval()
                 #self.validate(epoch=self.epoch,save_softmax=False,validation_folder_name=self.valfolder)

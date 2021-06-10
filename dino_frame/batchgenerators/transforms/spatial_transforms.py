@@ -351,8 +351,8 @@ class dino_SpatialTransform(AbstractTransform):
                 raise ValueError("only support 2D/3D batch data.")
         else:
             patch_size = self.patch_size
-        global_ret_val1 = dino_augment_spatial(global_data1, seg, patch_size=self.global_patch_size,
-                                       patch_center_dist_from_border=self.patch_center_dist_from_border,
+        global_ret_val1 = dino_augment_spatial(global_data1, None, patch_size=self.global_patch_size,
+                                       patch_center_dist_from_border=(self.global_patch_size[0]//2,self.global_patch_size[1]//2,self.global_patch_size[2]//2),
                                        do_elastic_deform=self.do_elastic_deform, alpha=self.alpha, sigma=self.sigma,
                                        do_rotation=self.do_rotation, angle_x=self.angle_x, angle_y=self.angle_y,
                                        angle_z=self.angle_z, do_scale=self.do_scale, scale=self.scale,
@@ -365,8 +365,8 @@ class dino_SpatialTransform(AbstractTransform):
                                        independent_scale_for_each_axis=self.independent_scale_for_each_axis,
                                        p_rot_per_axis=self.p_rot_per_axis,
                                        p_independent_scale_per_axis=self.p_independent_scale_per_axis)
-        global_ret_val2 = dino_augment_spatial(global_data2, seg, patch_size=self.global_patch_size,
-                                       patch_center_dist_from_border=self.patch_center_dist_from_border,
+        global_ret_val2 = dino_augment_spatial(global_data2, None, patch_size=self.global_patch_size,
+                                       patch_center_dist_from_border=(self.global_patch_size[0]//2,self.global_patch_size[1]//2,self.global_patch_size[2]//2),
                                        do_elastic_deform=self.do_elastic_deform, alpha=self.alpha, sigma=self.sigma,
                                        do_rotation=self.do_rotation, angle_x=self.angle_x, angle_y=self.angle_y,
                                        angle_z=self.angle_z, do_scale=self.do_scale, scale=self.scale,
@@ -381,8 +381,8 @@ class dino_SpatialTransform(AbstractTransform):
                                        p_independent_scale_per_axis=self.p_independent_scale_per_axis)
         _local = []
         for _ in range(local_data.shape[0]):
-            local_ret_val = dino_augment_spatial(local_data, seg, patch_size=self.local_patch_size,
-                                                 patch_center_dist_from_border=self.patch_center_dist_from_border,
+            local_ret_val = dino_augment_spatial(local_data[_], None, patch_size=self.local_patch_size,
+                                                 patch_center_dist_from_border=(self.local_patch_size[0]//2,self.local_patch_size[1]//2,self.local_patch_size[2]//2),
                                                  do_elastic_deform=self.do_elastic_deform, alpha=self.alpha,
                                                  sigma=self.sigma,
                                                  do_rotation=self.do_rotation, angle_x=self.angle_x,

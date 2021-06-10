@@ -87,7 +87,7 @@ def results_loop(in_queues: List[Queue], out_queue: thrQueue, abort_event: Event
     end_ctr = 0
 
     while True:
-        print("/////")
+        #print("/////")
         # if abort_event is set we need to clean up. This is where it hangs sometimes so it makes sense to drain all
         # the incoming queues and ignore all the errors occuring during this process.
         try:
@@ -161,8 +161,8 @@ class MultiThreadedAugmenter(object):
         that will come with a performance penalty. Default is 0.02 which will be fine for 50 iterations/s
     """
 
-    def __init__(self, data_loader, transform, num_processes, num_cached_per_queue=2, seeds=None, pin_memory=False,
-                 timeout=10, wait_time=0.02):
+    def __init__(self, data_loader, transform, num_processes, num_cached_per_queue=2, seeds=None, pin_memory=True,
+                 timeout=10, wait_time=0.01):
         self.timeout = timeout
         self.pin_memory = pin_memory
         self.transform = transform
@@ -183,19 +183,19 @@ class MultiThreadedAugmenter(object):
         self.abort_event = Event()
         self.wait_time = wait_time
         self.was_initialized = False
-        print("/////////multi_aug init//////////")
+       # print("/////////multi_aug init//////////")
 
     def __iter__(self):
-        print("/////////iter/////////")
+      #  print("/////////iter/////////")
 
         return self
 
     def next(self):
-        print("////////next/////////////////")
+       # print("////////next/////////////////")
         return self.__next__()
 
     def __get_next_item(self):
-        print("/////////__get_next_item//////////")
+      #  print("/////////__get_next_item//////////")
 
         item = None
 
@@ -214,7 +214,7 @@ class MultiThreadedAugmenter(object):
         return item
 
     def __next__(self):
-        print("/////////__next__//////////")
+       # print("/////////__next__//////////")
 
         if not self.was_initialized:
             self._start()
@@ -285,7 +285,7 @@ class MultiThreadedAugmenter(object):
 
         start = time()
         while self.pin_memory_thread is not None and self.pin_memory_thread.is_alive() and start + timeout > time():
-            sleep(0.2)
+            sleep(0.01)
 
         if len(self._processes) != 0:
             logging.debug("MultiThreadedGenerator: shutting down workers...")

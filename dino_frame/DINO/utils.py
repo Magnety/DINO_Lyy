@@ -1,11 +1,3 @@
-from builtins import range,zip
-import random
-
-import numpy
-import numpy as np
-import math
-import torch
-import warnings
 import os
 import sys
 import time
@@ -14,13 +6,80 @@ import random
 import datetime
 import subprocess
 from collections import defaultdict, deque
-
+from dino_frame.network_architecture.neural_network import ClassficationNetwork
 import numpy as np
 import torch
 from torch import nn
 import torch.distributed as dist
 from PIL import ImageFilter, ImageOps
-from dino_frame.network_architecture.neural_network import ClassficationNetwork
+import warnings
+import argparse
+
+class GaussianBlur(object):
+    """
+    Apply Gaussian Blur to the PIL image.
+    """
+    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
+        self.prob = p
+        self.radius_min = radius_min
+        self.radius_max = radius_max
+
+    def __call__(self, img):
+        do_it = random.random() <= self.prob
+        if not do_it:
+            return img
+
+        return img.filter(
+            ImageFilter.GaussianBlur(
+                radius=random.uniform(self.radius_min, self.radius_max)
+            )
+        )
+
+
+class Solarization(object):
+    """
+    Apply Solarization to the PIL image.
+    """
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return ImageOps.solarize(img)
+        else:
+            return img
+
+
+def load_pretrained_weights(model, pretrained_weights, checkpoint_key, model_name, patch_size):
+    if os.path.isfile(pretrained_weights):
+        state_dict = torch.load(pretrained_weights, map_location="cpu")
+        if checkpoint_key is not None and checkpoint_key in state_dict:
+            print(f"Take key {checkpoint_key} in provided checkpoint dict")
+            state_dict = state_dict[checkpoint_key]
+        # remove `module.` prefix
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # remove `backbone.` prefix induced by multicrop wrapper
+        state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+        msg = model.load_state_dict(state_dict, strict=False)
+        print('Pretrained weights found at {} and loaded with msg: {}'.format(pretrained_weights, msg))
+    else:
+        print("Please use the `--pretrained_weights` argument to indicate the path of the checkpoint to evaluate.")
+        url = None
+        if model_name == "vit_small" and patch_size == 16:
+            url = "dino_deitsmall16_pretrain/dino_deitsmall16_pretrain.pth"
+        elif model_name == "vit_small" and patch_size == 8:
+            url = "dino_deitsmall8_pretrain/dino_deitsmall8_pretrain.pth"
+        elif model_name == "vit_base" and patch_size == 16:
+            url = "dino_vitbase16_pretrain/dino_vitbase16_pretrain.pth"
+        elif model_name == "vit_base" and patch_size == 8:
+            url = "dino_vitbase8_pretrain/dino_vitbase8_pretrain.pth"
+        if url is not None:
+            print("Since no pretrained weights have been provided, we load the reference pretrained DINO weights.")
+            state_dict = torch.hub.load_state_dict_from_url(url="https://dl.fbaipublicfiles.com/dino/" + url)
+            model.load_state_dict(state_dict, strict=True)
+        else:
+            print("There is no reference weights available for this model => We use random weights.")
+
 
 def clip_gradients(model, clip):
     norms = []
@@ -91,7 +150,18 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
     return schedule
 
 
-
+def bool_flag(s):
+    """
+    Parse boolean arguments from the command line.
+    """
+    FALSY_STRINGS = {"off", "false", "0"}
+    TRUTHY_STRINGS = {"on", "true", "1"}
+    if s.lower() in FALSY_STRINGS:
+        return False
+    elif s.lower() in TRUTHY_STRINGS:
+        return True
+    else:
+        raise argparse.ArgumentTypeError("invalid value for a boolean flag")
 
 
 def fix_random_seeds(seed=31):
@@ -507,6 +577,28 @@ class MultiCropWrapper(nn.Module):
             start_idx = end_idx
         # Run the head forward on the concatenated features.
         return self.head(output)
+
+
+def get_params_groups(model):
+    regularized = []
+    not_regularized = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        # we do not regularize biases nor Norm parameters
+        if name.endswith(".bias") or len(param.shape) == 1:
+            not_regularized.append(param)
+        else:
+            regularized.append(param)
+    return [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.}]
+
+
+def has_batchnorms(model):
+    bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm)
+    for name, module in model.named_modules():
+        if isinstance(module, bn_types):
+            return True
+    return False
 class myMultiCropWrapper(ClassficationNetwork):
     """
     Perform forward pass separately on each resolution input.
@@ -556,24 +648,3 @@ class myMultiCropWrapper(ClassficationNetwork):
             start_idx = end_idx
         # Run the head forward on the concatenated features.
         return self.head(output)
-
-def get_params_groups(model):
-    regularized = []
-    not_regularized = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        # we do not regularize biases nor Norm parameters
-        if name.endswith(".bias") or len(param.shape) == 1:
-            not_regularized.append(param)
-        else:
-            regularized.append(param)
-    return [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.}]
-
-
-def has_batchnorms(model):
-    bn_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm)
-    for name, module in model.named_modules():
-        if isinstance(module, bn_types):
-            return True
-    return False
